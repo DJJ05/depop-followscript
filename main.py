@@ -71,6 +71,9 @@ def isfollowing(session, sellerid):
 
     response = session.get(url, headers=heads)
     if response.status_code != 200:
+        if response.status_code == 429:
+            print("Rate limited so exiting")
+            sys.exit()
         raise Exception(f"Couldn't check if following seller {response.status_code}")
 
     return response.json()["isFollowing"]
@@ -91,6 +94,9 @@ def changerelationship(session, sellerids, follow=True):
             response = session.delete(url, headers=heads)
 
         if response.status_code not in (202, 204):
+            if response.status_code == 429:
+                print("Rate limited so ending now")
+                break
             print(f"Ignored {'following' if follow else 'unfollowing'} seller {sellerids.index(sellerid)} {response.status_code}")
         else:
             worked.append(sellerid)
