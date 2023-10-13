@@ -5,8 +5,8 @@ import sys
 import requests
 from config import *
 
-PRODUCTS = f"https://webapi.depop.com/api/v2/search/products/?categories=1&itemsPerPage={MAX_SELLERS}&country=gb" \
-           f"&currency=GBP&userId={USER_ID}&sort=relevance "
+PRODUCTS = f"https://webapi.depop.com/api/v2/search/products/?categories={CATEGORY}&itemsPerPage={MAX_SELLERS}\
+            &country=gb&currency=GBP&userId={USER_ID}&sort=relevance "
 MEDIA_PRE = "https://media-photos.depop.com/b1/"
 RELATIONSHIP_PRE = "https://webapi.depop.com/api/v1/follows/relationship/"
 FOLLOW_PRE = "https://webapi.depop.com/api/v1/follows/"
@@ -100,14 +100,14 @@ def changerelationship(session, sellerids, follow=True):
 
 
 def newfollowbatch(session):
-    print(f"Starting new follow batch with max {MAX_SELLERS} sellers")
+    print(f"Starting new follow batch with max {MAX_SELLERS} sellers and category {CATEGORY}")
     sellerids = getsellerids(session)
 
     if len(sellerids) == 0:
         print("No new sellers found")
         sys.exit()
 
-    input(f"Found {len(sellerids)} new sellers, continue to follow and dump ids?")
+    print(f"Found {len(sellerids)} new sellers")
     followed = changerelationship(session, sellerids)
     print(f"Followed {len(followed)} new sellers")
 
