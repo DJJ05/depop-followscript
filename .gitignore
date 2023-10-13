@@ -128,3 +128,4 @@ t.txt
 2.txt
 .DS_Store
 .idea/
+config.py

@@ -3,12 +3,13 @@ import json
 import sys
 
 import requests
+from config import *
 
-PRODUCTS = "https://webapi.depop.com/api/v2/search/products/?categories=1&itemsPerPage=200&country=gb&currency=GBP&userId=USERID&sort=relevance"
+PRODUCTS = f"https://webapi.depop.com/api/v2/search/products/?categories=1&itemsPerPage={MAX_SELLERS}&country=gb" \
+           f"&currency=GBP&userId={USER_ID}&sort=relevance "
 MEDIA_PRE = "https://media-photos.depop.com/b1/"
 RELATIONSHIP_PRE = "https://webapi.depop.com/api/v1/follows/relationship/"
 FOLLOW_PRE = "https://webapi.depop.com/api/v1/follows/"
-TOKEN = "TOKEN HERE"
 
 
 def headers():
@@ -16,7 +17,7 @@ def headers():
         "authority": "webapi.depop.com",
         "accept": "application/json",
         "accept-language": "en-GB,en-US;q=0.9,en;q=0.8",
-        "depop-user-id": "USER ID",
+        "depop-user-id": USER_ID,
         "origin": "https://www.depop.com",
         "referer": "https://www.depop.com/",
         "sec-ch-ua": "\"Chromium\";v=\"118\", \"Brave\";v=\"118\", \"Not=A?Brand\";v=\"99\"",
@@ -25,7 +26,8 @@ def headers():
         "sec-fetch-dest": "empty",
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-site",
-        "user-agent": "USER AGENT HERE"
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/104.0.5112.79 Safari/537.36 "
     }
 
 
@@ -34,7 +36,7 @@ def getsellerids(session, remove_following=True):
     sellerids = []
 
     if response.status_code != 200:
-        raise Exception("Bad response from server")
+        raise Exception(f"Bad response from server when getting products: {response.status_code}")
 
     data = response.json()
     if data["meta"]["resultCount"] == 0:
@@ -47,7 +49,7 @@ def getsellerids(session, remove_following=True):
 
     sellerids = list(set(sellerids))
     if remove_following:
-        print("Removing following")
+        print("Removing sellers already followed")
         new_sellerids = []
         for sellerid in sellerids:
             try:
@@ -55,7 +57,7 @@ def getsellerids(session, remove_following=True):
                 if not following:
                     new_sellerids.append(sellerid)
             except Exception as e:
-                print(f"Ignored seller {sellerids.index(sellerid)} {e}")
+                print(f"Ignored adding seller {sellerids.index(sellerid)}-{sellerid} {e}")
                 continue
         return new_sellerids
 
@@ -69,12 +71,13 @@ def isfollowing(session, sellerid):
 
     response = session.get(url, headers=heads)
     if response.status_code != 200:
-        raise Exception(f"{response.status_code}")
+        raise Exception(f"Couldn't check if following seller {response.status_code}")
 
     return response.json()["isFollowing"]
 
 
 def changerelationship(session, sellerids, follow=True):
+    print(f"Starting {'follow' if follow else 'unfollow'}ing sellers")
     worked = []
     heads = session.headers
     heads["authorization"] = f"Bearer {TOKEN}"
@@ -92,10 +95,12 @@ def changerelationship(session, sellerids, follow=True):
         else:
             worked.append(sellerid)
 
+    print(f"{len(worked)} out of {len(sellerids)} {'followed' if follow else 'unfollowed'}")
     return worked
 
 
 def newfollowbatch(session):
+    print(f"Starting new follow batch with max {MAX_SELLERS} sellers")
     sellerids = getsellerids(session)
 
     if len(sellerids) == 0:
@@ -116,6 +121,7 @@ def newfollowbatch(session):
 
 
 def unfollowbatch(session):
+    print(f"Starting unfollow batch")
     with open("followed.json") as f:
         data = json.load(f)
     sellerids = data["ids"]
