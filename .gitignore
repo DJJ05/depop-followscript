@@ -129,3 +129,4 @@ t.txt
 .DS_Store
 .idea/
 config.py
+t.json
