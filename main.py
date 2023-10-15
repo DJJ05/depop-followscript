@@ -1,19 +1,23 @@
 # coding=utf-8
 import json
 import sys
+import time
 from datetime import datetime
 
 import requests
 from config import *
 
 PRODUCTS = f"https://webapi.depop.com/api/v2/search/products/?categories={CATEGORY}&itemsPerPage={MAX_SELLERS}\
-            &country=gb&currency=GBP&userId={USER_ID}&sort=relevance "
+            &country=gb&currency=GBP&userId={USER_ID}&sort=newlyListed"
 MEDIA_PRE = "https://media-photos.depop.com/b1/"
 WEB_API_PRE = "https://webapi.depop.com/api/v1/"
 RELATIONSHIP_PRE = WEB_API_PRE + "follows/relationship/"
 FOLLOW_PRE = WEB_API_PRE + "follows/"
 SHOP_PRE = WEB_API_PRE + "shop/"
 FOLLOWERS = WEB_API_PRE + "user/{0}/followers/"
+LOGIN = WEB_API_PRE + "auth/login/"
+DEVICES = WEB_API_PRE + "auth/mfa/devices/"
+CHALLENGE = DEVICES + "{0}/challenge/"
 
 
 def headers():
@@ -78,8 +82,8 @@ def getfollowers(session, seller, remove_following=True, remove_inactive=True):
     response = session.get(url, headers=heads)
     if response.status_code != 200:
         if response.status_code == 429:
-            print("Rate limited so exiting")
-            sys.exit()
+            print("Rate limited so sleeping 1 minute")
+            time.sleep(60)
         raise Exception(f"Couldn't get followers {response.status_code}")
 
     followers = []
@@ -135,8 +139,8 @@ def isactive(session, seller):
     response = session.get(url)
     if response.status_code != 200:
         if response.status_code == 429:
-            print("Rate limited so exiting")
-            sys.exit()
+            print("Rate limited so sleeping 1 minute")
+            time.sleep(60)
         print(f"Couldn't check if seller active {response.status_code}")
 
     lastseen = response.json()["last_seen"]
@@ -154,8 +158,8 @@ def isfollowing(session, sellerid):
     response = session.get(url, headers=heads)
     if response.status_code != 200:
         if response.status_code == 429:
-            print("Rate limited so exiting")
-            sys.exit()
+            print("Rate limited so sleeping 1 minute")
+            time.sleep(60)
         raise Exception(f"Couldn't check if following seller {response.status_code}")
 
     return response.json()["isFollowing"]
@@ -255,17 +259,77 @@ def unfollowbatch(session):
     print("Redumped")
 
 
+def loginwithuserpass(session):
+    data = {
+        "username": USERNAME,
+        "password": PASSW
+    }
+
+    response = session.post(LOGIN, data=data)
+    if response.status_code != 403:
+        print(f"Error encountered when logging in {response.status_code} {response.json()}")
+        sys.exit()
+    print("MFA required, fetching")
+
+    mfa_token = response.json()["mfa_token"]
+    heads = session.headers
+    heads["authorization"] = f"Bearer {mfa_token}"
+
+    response = session.get(DEVICES, headers=heads)
+    if response.status_code != 200:
+        print(f"Error encountered when getting devices {response.status_code} {response.json()}")
+        sys.exit()
+
+    device = None
+    for phone in response.json():
+        if phone.get("isDefault", None):
+            device = phone
+            break
+
+    if not device:
+        print("No default device found")
+        sys.exit()
+
+    url = CHALLENGE.format(device["id"])
+    response = session.post(url, headers=heads)
+    if response.status_code != 200:
+        print(f"Error encountered when challenging {response.status_code} {response.json()}")
+        sys.exit()
+
+    respdata = response.json()
+    challenge_id = respdata["challengeId"]
+    remaining = respdata["challengesRemaining"]
+
+    print(f"Challenge id {challenge_id} sent to {device['phoneNumber']}, remaining {remaining} challenges")
+    mfa_code = input("MFA code: ")
+
+    data = {
+        "bindingCode": mfa_code,
+        "challengeId": challenge_id,
+        "mfaToken": mfa_token
+    }
+    resp = session.post(LOGIN, data=data)
+    if resp.status_code != 200:
+        print(f"Error encountered when logging in {resp.status_code} {resp.json()}")
+        sys.exit()
+
+    token = resp.json()["token"]
+    print(f"Fetched token '{token}'. Please enter into config.py")
+
+
 def main():
     session = requests.Session()
     session.headers.update(headers())
 
-    choice = input("Follow / unfollow / shop follow? (f/u/s): ")
+    choice = input("Follow / unfollow / shop follow / token get? (f/u/s/t): ")
     if choice == "f":
         newfollowbatch(session)
     elif choice == "u":
         unfollowbatch(session)
     elif choice == "s":
         shopfollowbatch(session)
+    elif choice == "t":
+        loginwithuserpass(session)
     else:
         print("Invalid choice")
         sys.exit()
@@ -274,8 +338,4 @@ def main():
 if __name__ == '__main__':
     main()
 
-# TODO: Check seller active before following
 # TODO: Check if seller has followed back then unfollow as alternative to unfollow batch
-# TODO: Follow followers of followed sellers
-# TODO: Check likes of posts and send special offers / message
-# TODO: Login with email password mfa
