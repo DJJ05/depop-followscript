@@ -7,10 +7,9 @@ from datetime import datetime
 import requests
 from config import *
 
-PRODUCTS = f"https://webapi.depop.com/api/v2/search/products/?categories={CATEGORY}&itemsPerPage={MAX_SELLERS}\
-            &country=gb&currency=GBP&userId={USER_ID}&sort=newlyListed"
 MEDIA_PRE = "https://media-photos.depop.com/b1/"
 WEB_API_PRE = "https://webapi.depop.com/api/v1/"
+WEB_API_PRE_2 = "https://webapi.depop.com/api/v2/"
 RELATIONSHIP_PRE = WEB_API_PRE + "follows/relationship/"
 FOLLOW_PRE = WEB_API_PRE + "follows/"
 SHOP_PRE = WEB_API_PRE + "shop/"
@@ -18,6 +17,11 @@ FOLLOWERS = WEB_API_PRE + "user/{0}/followers/"
 LOGIN = WEB_API_PRE + "auth/login/"
 DEVICES = WEB_API_PRE + "auth/mfa/devices/"
 CHALLENGE = DEVICES + "{0}/challenge/"
+LIKES = WEB_API_PRE + "likes/notifications/"
+PRODUCT_BY_ID = WEB_API_PRE_2 + "product/by-id/{0}/"
+OFFERS = WEB_API_PRE_2 + "offers/seller/products/{0}/offers/"
+PRODUCTS = WEB_API_PRE + "shop/{0}/products/"
+PRODUCT = WEB_API_PRE_2 + "products/{0}/"
 
 
 def headers():
@@ -39,8 +43,10 @@ def headers():
     }
 
 
-def getsellers(session, remove_following=True):
-    response = session.get(PRODUCTS)
+def getsellers(session, remove_following=True, category=CATEGORY):
+    products = f"https://webapi.depop.com/api/v2/search/products/?categories={category}&itemsPerPage={MAX_SELLERS}\
+                &country=gb&currency=GBP&userId={USER_ID}&sort=relevance"
+    response = session.get(products)
     sellers = []
 
     if response.status_code != 200:
@@ -193,9 +199,9 @@ def changerelationship(session, sellers, follow=True):
     return worked
 
 
-def newfollowbatch(session):
-    print(f"Starting new follow batch with max {MAX_SELLERS} sellers and category {CATEGORY}")
-    sellers = getsellers(session)
+def newfollowbatch(session, category=CATEGORY):
+    print(f"Starting new follow batch with max {MAX_SELLERS} sellers and category {category}")
+    sellers = getsellers(session, category=category)
 
     if len(sellers) == 0:
         print("No new sellers found")
@@ -317,11 +323,104 @@ def loginwithuserpass(session):
     print(f"Fetched token '{token}'. Please enter into config.py")
 
 
+def continuousfollow(session):
+    try:
+        while True:
+            for category in range(1, 10):
+                newfollowbatch(session, category=category)
+                time.sleep(120)
+    except KeyboardInterrupt:
+        print("Interrupted")
+
+
+def getlikes(session):
+    heads = session.headers
+    heads["authorization"] = f"Bearer {TOKEN}"
+    likes = session.get(LIKES, headers=heads)
+    return likes.json()
+
+
+def sendoffer(session, buyer_id, product_id, newprice):
+    url = OFFERS.format(product_id)
+    heads = session.headers
+    heads["authorization"] = f"Bearer {TOKEN}"
+    json_data = {
+        'offer_recipient_id': int(buyer_id),
+        'offer_value': str(newprice)[0:2],
+        'offer_currency': 'GBP',
+    }
+    _ = session.options(url, headers=heads, data=json_data)
+    response = session.post(url, headers=heads, data=json_data)
+    return response
+
+
+def offers_to_likers(session, initial=45.00, lower_by=5):
+    likes = getlikes(session)
+    for like in likes["actionableLikes"]:
+        description = like['product']['description'].split('\n')[0]
+        buyer_id = like['sender']['id']
+        product_id = like['product']['id']
+        product = session.get(PRODUCT_BY_ID.format(product_id)).json()
+
+        if float(product['price']['priceAmount']) != initial:
+            print(f"Price for {description} is not {initial}")
+            continue
+        if not like['canSendOffer']:
+            print(f"Can't send offer to {like['sender']['username']} for {description}")
+            continue
+
+        print(f"Sending offer to {like['sender']['username']} for {description}")
+        resp = sendoffer(session, buyer_id, product_id, initial - lower_by)
+        print(f"Response was {resp.status_code} {resp.json()}")
+
+
+def getproducts(session, seller_id=USER_ID):
+    heads = session.headers
+    heads["authorization"] = f"Bearer {TOKEN}"
+    products = session.get(PRODUCTS.format(seller_id), headers=heads)
+    return products.json()['products']
+
+
+def transformproductdata(product):
+    product.pop("id")
+    product["pictureIds"] = [picture[0]["id"] for picture in product["pictures"]]
+    product.pop("pictures")
+    product["nationalShippingCost"] = product["price"]["nationalShippingCost"]
+    product["priceAmount"] = product["price"]["priceAmount"]
+    product["priceCurrency"] = product["price"]["currencyName"]
+    product.pop("price")
+    product.pop("slug")
+    product.pop("status")
+    return product
+
+
+def updatelistings(session):
+    heads = session.headers
+    heads["authorization"] = f"Bearer {TOKEN}"
+    products = [product for product in getproducts(session) if not product['sold']][::-1]
+    for product in products:
+        productdata = session.get(PRODUCT.format(product['slug']), headers=heads)
+        productdata = transformproductdata(productdata.json())
+        session.headers["content-type"] = "application/json"
+        session.headers['accept'] = 'application/json, text/plain, */*'
+        productdata = json.dumps(productdata)
+        resp = session.put(PRODUCT.format(product['slug']), headers=heads, data=productdata)
+        print(f"Updated {product['slug']} with response {resp.status_code}")
+
+
+def updatelistingloop(session, wait=300):
+    print(f"Starting listing update loop with wait {wait}s")
+    while True:
+        updatelistings(session)
+        print("Updated successfully, waiting...")
+        time.sleep(wait)
+
+
 def main():
     session = requests.Session()
     session.headers.update(headers())
 
-    choice = input("Follow / unfollow / shop follow / token get? (f/u/s/t): ")
+    choice = input("Follow / unfollow / shop follow / token get / continuous follow / offers to likers / listing update? (f/u/s/t/c/o/l): ")
     if choice == "f":
         newfollowbatch(session)
     elif choice == "u":
@@ -330,6 +429,12 @@ def main():
         shopfollowbatch(session)
     elif choice == "t":
         loginwithuserpass(session)
+    elif choice == "c":
+        continuousfollow(session)
+    elif choice == "o":
+        offers_to_likers(session)
+    elif choice == "l":
+        updatelistingloop(session)
     else:
         print("Invalid choice")
         sys.exit()
@@ -338,4 +443,3 @@ def main():
 if __name__ == '__main__':
     main()
 
-# TODO: Check if seller has followed back then unfollow as alternative to unfollow batch
